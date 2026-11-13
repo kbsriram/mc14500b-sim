@@ -4,7 +4,13 @@
 // Blocks stand in GRID's columns; cells and stages stand in columns by logic depth; transistors as
 // CMOS stages are drawn, the P network over the N network. Wires are routed by site/route.js; nets the router
 // cannot place, and clock and reset nets read by many blocks, get a tag at each pin instead.
-// Run from the repo root: node gen/draft.js
+// gen/placement.json, if present, holds hand placement by layout name. A block or cell: {cols: [[part, ...], ...],
+// pins: {in, out, ctl: [net, ...]}} (pins for a block only), columns left to right, each top to bottom, and each
+// edge's pins in order. A stage: {at: {transistor: [x, y]}, rot: {transistor: degrees}}. Any layout: wires: [{net,
+// pts}], hand-drawn runs kept as they are, the router joining the rest of their net to them. What it leaves out is
+// placed as usual.
+// Run from the repo root: node gen/draft.js [--only NAME], NAME a layout (stage.inv, cell.dff, block.TIE): only that
+// layout, and the chip after a block.
 const fs = require('fs');
 const path = require('path');
 const Symbols = require('../site/symbols.js');
@@ -16,6 +22,8 @@ const nl = globalThis.NETLISTS.mc14500b;
 const S = Symbols.build(nl);
 const G = Route.G;
 const OUT = path.join(__dirname, '..', 'site', 'gen', 'layouts');
+const PLACEMENT = path.join(__dirname, 'placement.json');
+const PLACE = fs.existsSync(PLACEMENT) ? JSON.parse(fs.readFileSync(PLACEMENT, 'utf8')) : {};
 const PITCH = 32;   // spacing of a closed block's pins
 const GAP = 128;    // between columns of parts, for wires
 const MARGIN = 96;  // between a layout's pins and its parts
@@ -35,7 +43,7 @@ const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
 class Sheet {
   // Parts and pins on one layout, and the wires and tags joining them.
   constructor(w, h) {
-    Object.assign(this, { w, h, pins: {}, parts: {}, wires: [], tags: [], posts: {}, rects: [] });
+    Object.assign(this, { w, h, pins: {}, parts: {}, wires: [], tags: [], posts: {}, rects: [], keep: [] });   // keep: hand wires
   }
 
   post(net, x, y, dir) { (this.posts[net] ??= []).push([x, y, dir]); }
@@ -66,8 +74,8 @@ class Sheet {
   }
 
   route(tagged = new Set()) {
-    const r = Route.routeSheet({ box: [0, 0, this.w, this.h], rects: this.rects, posts: this.posts }, Object.keys(this.posts).sort(), [], tagged);
-    this.wires.push(...r.wires);
+    const r = Route.routeSheet({ box: [0, 0, this.w, this.h], rects: this.rects, posts: this.posts }, Object.keys(this.posts).sort(), this.keep, tagged);
+    this.wires.push(...this.keep, ...r.wires);
     this.tags.push(...r.tags);
     return r.failed;
   }
@@ -77,9 +85,12 @@ class Sheet {
   }
 }
 
-function columns(items, pinY) {
+let ORDER = 'ins';   // see columns(); drafted() tries both
+
+function columns(items, pinY, hint) {
   // Columns of items {id, sym, ins, outs} by logic depth from the layout's pins, each column ordered by the mean
-  // height of its inputs' sources; pinY gives the inputs arriving at the layout's pins, as fractions of its height.
+  // height of its inputs' sources, then of the layout pins it drives; with ORDER 'both', by the mean of both.
+  // pinY gives the layout's pins' heights, as fractions of its height.
   const drv = new Map();
   for (const it of items) for (const n of it.outs) drv.set(n, it);
   const depth = new Map();
@@ -96,12 +107,22 @@ function columns(items, pinY) {
   for (const it of items) { const c = d(it); if (!cols.has(c)) cols.set(c, []); cols.get(c).push(it); }
   const y = new Map(Object.entries(pinY)), out = [];
   for (const c of [...cols.keys()].sort((a, b) => a - b)) {
-    const bary = it => { const ys = it.ins.filter(n => y.has(n)).map(n => y.get(n)); return ys.length ? mean(ys) : it.y0 ?? 0.5; };
-    const col = cols.get(c).sort((a, b) => bary(a) - bary(b) || (a.y0 ?? 0) - (b.y0 ?? 0));
+    const pinsOut = it => it.outs.filter(n => n in pinY);
+    const bary = it => {
+      const ys = [...it.ins.filter(n => y.has(n)).map(n => y.get(n)), ...(ORDER === 'both' ? pinsOut(it).map(n => pinY[n]) : [])];
+      return ys.length ? mean(ys) : it.y0 ?? 0.5;
+    };
+    const outY = it => { const ys = pinsOut(it).map(n => pinY[n]); return ys.length ? mean(ys) : 0.5; };
+    const col = cols.get(c).sort((a, b) => bary(a) - bary(b) || outY(a) - outY(b) || (a.y0 ?? 0) - (b.y0 ?? 0));
     col.forEach((it, i) => { for (const n of it.outs) y.set(n, (i + 0.5) / col.length); });
     out.push(col);
   }
-  return out;
+  if (!hint?.cols?.length) return out;
+  // hand placement: its columns in its order; a part it leaves out goes to the end of the column at its usual place
+  const byId = new Map(items.map(it => [it.id, it])), placed = new Set(hint.cols.flat());
+  const hand = hint.cols.map(c => c.filter(id => byId.has(id)).map(id => byId.get(id)));
+  out.forEach((col, i) => { for (const it of col) if (!placed.has(it.id)) hand[Math.min(i, hand.length - 1)].push(it); });
+  return hand.filter(c => c.length);
 }
 
 const size = it => it.w ? [it.w, it.h] : [S[it.sym].w, S[it.sym].h];
@@ -120,13 +141,14 @@ function scaledPins(sh, pins, k) {
   }
 }
 
-function inside(W, H, pins, items, minK = 2) {
+function inside(W, H, pins, items, minK = 2, hint) {
   // A Sheet for a closed outline of W by H with pins {net: pin}: items in columns inside it, k times larger, k the
   // smallest whole number that fits them. Returns [sheet, k].
-  const cols = columns(items, Object.fromEntries(Object.entries(pins).map(([n, p]) => [n, p.at[1] / H])));
+  const cols = columns(items, Object.fromEntries(Object.entries(pins).map(([n, p]) => [n, p.at[1] / H])), hint);
   const [width, height] = measure(cols);
   const k = Math.max(minK, Math.ceil(width / W), Math.ceil(height / H));
   const sh = new Sheet(W * k, H * k);
+  sh.keep = hint?.wires || [];
   scaledPins(sh, pins, k);
   let x = snap(MARGIN + (sh.w - width) / 2);
   for (const col of cols) {
@@ -194,18 +216,38 @@ function stageLayout(tname) {
   const needW = W + 2 * MARGIN + 2 * 64, needH = H + 2 * MARGIN + 2 * 48;
   const k = Math.max(2, Math.ceil(needW / s.w), Math.ceil(needH / s.h));
   const sh = new Sheet(s.w * k, s.h * k);
+  sh.keep = PLACE[sym]?.wires || [];
   scaledPins(sh, symPins(sym), k);
-  const x0 = snap((sh.w - W) / 2), y0 = snap((sh.h - H) / 2);
-  for (const [r, x, y, top, bot, rot] of parts) {
+  const x0 = snap((sh.w - W) / 2), y0 = snap((sh.h - H) / 2), hint = PLACE[sym] || {}, gates = [];
+  for (const [r, x, y, top, bot, rot0] of parts) {
+    const rot = hint.rot?.[r] ?? rot0, [px, py] = hint.at?.[r] ?? [x0 + snap(x), y0 + snap(y)];
     const o = Symbols.orient({ rot }, 48, 64), q = S[tsym(r)].pins;
     // the transistor's a and b are interchangeable: put top's net on whichever pin lands up (or west, turned)
     const aUp = o.map(q.a.at)[1] < o.map(q.b.at)[1] || o.map(q.a.at)[0] < o.map(q.b.at)[0];
     const nets = { gate: ts[r].gate, a: aUp ? top : bot, b: aUp ? bot : top };
     if (!new Set([ts[r].a, ts[r].b]).has(top)) { nets.a = ts[r].a; nets.b = ts[r].b; }
-    sh.add(r, tsym(r), x0 + snap(x), y0 + snap(y), nets, { rot });
+    sh.add(r, tsym(r), px, py, nets, { rot });
+    const g = o.map(q.gate.at);
+    gates.push({ r, net: ts[r].gate, type: ts[r].type, at: [px + g[0], py + g[1]], dir: o.dir(q.gate.dir) });
   }
+  symmetricInputs(sh, gates);
   sh.supplies();
   return [sh, k];
+}
+
+function symmetricInputs(sh, gates) {
+  // An input pin that gates one P and one N transistor whose gate leads point west in one column, the pin between
+  // them in height: a straight run from the pin to a bus two grid steps west of the leads, and the bus spanning both,
+  // kept as hand wires are, when no part stands in the way; the router joins the leads to the bus.
+  const clear = (x0, y0, x1, y1) => !sh.rects.some(([a, b, c, d]) => a <= Math.max(x0, x1) && c >= Math.min(x0, x1) && b <= Math.max(y0, y1) && d >= Math.min(y0, y1));
+  for (const [net, pin] of Object.entries(sh.pins)) {
+    const gs = gates.filter(g => g.net === net);
+    if (pin.dir !== 'w' || gs.length !== 2 || new Set(gs.map(g => g.type)).size !== 2 || sh.keep.some(w => w.net === net)) continue;
+    const [a, b] = gs.sort((p, q) => p.at[1] - q.at[1]), x = a.at[0] - 2 * G, y = pin.at[1];
+    if (a.at[0] !== b.at[0] || a.dir !== 'w' || b.dir !== 'w' || !(a.at[1] < y && y < b.at[1]) || x <= pin.at[0]) continue;
+    if (!clear(pin.at[0] + G, y, x, y) || !clear(x, a.at[1], x, b.at[1])) continue;
+    sh.keep.push({ net, pts: [pin.at, [x, y]] }, { net, pts: [[x, a.at[1]], [x, b.at[1]]] });
+  }
 }
 
 function cellItems(ct) {
@@ -219,7 +261,7 @@ function cellItems(ct) {
 
 function cellLayout(ct) {
   const sym = `cell.${ct}`, s = S[sym];
-  return inside(s.w, s.h, symPins(sym), cellItems(ct), 3);
+  return inside(s.w, s.h, symPins(sym), cellItems(ct), 3, PLACE[sym]);
 }
 
 // Blocks: their cells, each drawn as its cell type's symbol, or its stage's for a cell of one stage.
@@ -251,8 +293,10 @@ function blockPins(b) {
   for (const k of SIDES.w) if (k in nl.pins) outs.delete(name(nl.pins[k]));
   const ctl = ports.filter(n => !outs.has(n) && ['CLK', 'RST', 'OSC'].includes(drvBlock.get(n)) && drvBlock.get(n) !== b.name);
   const ins = ports.filter(n => !outs.has(n) && !ctl.includes(n)), out = ports.filter(n => outs.has(n));
-  const at = n => farEnd(b, b.ports[ports.indexOf(n)]);
-  return { in: ins.sort((p, q) => at(p)[1] - at(q)[1]), out: out.sort((p, q) => at(p)[1] - at(q)[1]), ctl: ctl.sort((p, q) => at(p)[0] - at(q)[0]), items };
+  const at = n => farEnd(b, b.ports[ports.indexOf(n)]), hint = PLACE[`block.${b.name}`]?.pins || {};
+  const order = (list, cls) => { const h = hint[cls] || []; return [...h.filter(n => list.includes(n)), ...list.filter(n => !h.includes(n))]; };
+  return { in: order(ins.sort((p, q) => at(p)[1] - at(q)[1]), 'in'), out: order(out.sort((p, q) => at(p)[1] - at(q)[1]), 'out'),
+    ctl: order(ctl.sort((p, q) => at(p)[0] - at(q)[0]), 'ctl'), items };
 }
 
 function edgePoints(shape, w, h, cls) {
@@ -299,11 +343,12 @@ function blockLayout(b) {
   const w0 = PITCH * Math.max(6, Math.ceil(title.length * 22 / PITCH) + 4);   // room for the title between the pins' names
   let [w, h, pins] = placePins(shape, p, w0, PITCH * 6);
   const pinY = Object.fromEntries(Object.entries(pins).map(([n, q]) => [n, q.at[1] / h]));
-  const [cw, ch] = measure(columns(p.items, pinY));
+  const hint = PLACE[`block.${b.name}`];
+  const [cw, ch] = measure(columns(p.items, pinY, hint));
   const k0 = Math.max(3, Math.ceil(ch / h));
   const w1 = PITCH * Math.ceil(cw / k0 / PITCH);
   if (w1 > w) [w, h, pins] = placePins(shape, p, w1, h);
-  const [sh, k] = inside(w, h, pins, p.items, 3);
+  const [sh, k] = inside(w, h, pins, p.items, 3, hint);
   return [sh, k, w, h];
 }
 
@@ -359,7 +404,45 @@ function write(file, sh, k, extra = {}) {
   console.log(`${p}: ${Object.keys(L.parts).length} parts, ${L.wires.length} wire runs, ${new Set(L.tags.map(t => t.net)).size} tagged nets`);
 }
 
+function drafted(make, once = false) {
+  // make()'s [sheet, k], routed, with columns ordered both ways (see columns): the fewer tagged nets, then the shorter
+  // wire; once: only the usual way, for a hand-placed block.
+  let best = null;
+  for (const o of once ? ['ins'] : ['ins', 'both']) {
+    ORDER = o;
+    const [sh, k] = make();
+    sh.route();
+    const tags = new Set(sh.tags.map(t => t.net)).size;
+    const len = sh.wires.reduce((s, w) => s + w.pts.slice(1).reduce((m, p, i) => m + Math.abs(p[0] - w.pts[i][0]) + Math.abs(p[1] - w.pts[i][1]), 0), 0);
+    if (!best || tags < best.tags || (tags === best.tags && len < best.len)) best = { sh, k, tags, len };
+  }
+  ORDER = 'ins';
+  return [best.sh, best.k];
+}
+
 function main() {
+  const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
+  if (only?.startsWith('stage.') && only.slice(6) in nl.types.stage) {
+    const [sh, k] = stageLayout(only.slice(6));
+    sh.route();
+    return write(only, sh, k);
+  }
+  if (only?.startsWith('cell.') && only.slice(5) in nl.types.cell) {
+    const [sh, k] = drafted(() => cellLayout(only.slice(5)), !!PLACE[only]?.cols?.length);
+    return write(only, sh, k);
+  }
+  if (only) {   // one block and the chip, with the other layouts as they are
+    const b = nl.blocks.find(x => `block.${x.name}` === only);
+    if (!b) throw new Error(`no layout ${only}`);
+    require(path.join(OUT, 'index.js'));
+    const [sh, k] = drafted(() => blockLayout(b), !!PLACE[only]?.cols?.length);
+    write(`block.${b.name}`, sh, k);
+    const sizes = Object.fromEntries(nl.blocks.map(x => { const L = LAYOUTS[`block.${x.name}`]; return [x.name, [L.w / L.k, L.h / L.k]]; }));
+    const [chip, tagged] = chipLayout(sizes);
+    chip.route(tagged);
+    write('chip', chip, null, { tagged: [...tagged].sort() });
+    return;
+  }
   fs.mkdirSync(OUT, { recursive: true });
   const files = [];
   for (const t of Object.keys(nl.types.stage)) {
@@ -370,15 +453,13 @@ function main() {
   }
   for (const [t, ct] of Object.entries(nl.types.cell)) {
     if (ct.stages.length === 1) continue;
-    const [sh, k] = cellLayout(t);
-    sh.route();
+    const [sh, k] = drafted(() => cellLayout(t), !!PLACE[`cell.${t}`]?.cols?.length);
     write(`cell.${t}`, sh, k);
     files.push(`cell.${t}`);
   }
   const sizes = {};
   for (const b of nl.blocks) {
-    const [sh, k] = blockLayout(b);
-    sh.route();
+    const [sh, k] = drafted(() => blockLayout(b), !!PLACE[`block.${b.name}`]?.cols?.length);
     write(`block.${b.name}`, sh, k);
     files.push(`block.${b.name}`);
     const L = LAYOUTS[`block.${b.name}`];

@@ -7,6 +7,7 @@ the type's first copy names them, and a graph isomorphism (extract/propose.py's 
 copy onto it. A stage's roles: y its output, a, b, ... its inputs in its N network's order, m0, m1, ... nets between
 transistors; a transmission gate's are a and b (its terminals), gn and gp (its gates). A cell's: in0, in1, ... the
 nets it reads from outside, out0, out1, ... the nets it drives that others read, n0, n1, ... its own.
+Also writes site/gen/die.js, the die's polygons for the 3D view (extract/geometry.py).
 Run from the repo root: python3 extract/build.py
 """
 import json
@@ -14,6 +15,7 @@ import os
 
 import networkx as nx
 
+import geometry
 import hier
 import netlist
 import propose
@@ -217,6 +219,13 @@ def main():
                 + json.dumps(out, separators=(',', ':')) + ';\n')
     print(f"{path}: {len(keys)} nets, {len(ts)} transistors, {len(caps)} capacitors, {len(stages)} stages "
           f"({len(types['stage'])} types), {len(cells)} cells ({len(types['cell'])} types), {len(blocks)} blocks")
+
+    geo = geometry.shapes(die, d, lambda i: idx.get(find(plate[i]), -1) if i in plate else -1,
+                          [(p, tix[f"{t['channel']}.{t['piece']}"]) for t, p in zip(raw, pieces)])
+    path = os.path.join(HERE, '..', 'site', 'gen', 'die.js')
+    with open(path, 'w') as f:
+        f.write('// Written by extract/build.py.\nglobalThis.DIE3D = ' + json.dumps(geo, separators=(',', ':')) + ';\n')
+    print(f"{path}: {len(geo['shapes'])} shapes, {sum(len(g['t']) for g in geo['shapes']) // 3} triangles")
 
 
 if __name__ == '__main__':

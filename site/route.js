@@ -86,11 +86,12 @@ class Router {
     }
   }
 
-  route(net, terminals) {
-    // A wire joining terminals [[x, y]]: [[a, b]] straight runs, or null if one cannot be reached.
-    const tree = new Set([pk(...terminals[0])]), edges = new Set();
-    const t0 = terminals[0], dist = t => Math.abs(t[0] - t0[0]) + Math.abs(t[1] - t0[1]);
-    for (const t of terminals.slice(1).sort((a, b) => dist(a) - dist(b))) {
+  route(net, terminals, seed = []) {
+    // A wire joining terminals [[x, y]]: [[a, b]] straight runs, or null if one cannot be reached. seed: point keys
+    // of the net's wire already drawn, which the new runs join.
+    const tree = new Set(seed.length ? seed : [pk(...terminals[0])]), edges = new Set();
+    const t0 = seed.length ? unpk(seed[0]) : terminals[0], dist = t => Math.abs(t[0] - t0[0]) + Math.abs(t[1] - t0[1]);
+    for (const t of terminals.slice(seed.length ? 0 : 1).sort((a, b) => dist(a) - dist(b))) {
       if (tree.has(pk(...t))) continue;
       const path = this.search(net, t, tree);
       if (!path) return null;
@@ -169,7 +170,8 @@ class Router {
 }
 
 function routeSheet(sheet, nets, keep = [], tagged = new Set(), passes = 6) {
-  // Wire nets of sheet {box, rects, posts: {net: [[x, y, dir]]}} around the wires kept [{net, pts}]. Nets in
+  // Wire nets of sheet {box, rects, posts: {net: [[x, y, dir]]}} around the wires kept [{net, pts}], a net's own kept
+  // wire joined by its new runs. Nets in
   // tagged, and any the router cannot place, get tags instead. A pass that leaves nets unplaced is retried with
   // those nets first; the pass with fewest unplaced nets wins. Returns {wires, tags, failed}.
   const [bx0, by0, bx1, by1] = sheet.box;
@@ -182,10 +184,12 @@ function routeSheet(sheet, nets, keep = [], tagged = new Set(), passes = 6) {
       r.blockRect(...rc);   // parts, and the outline: wires leave a pin straight inward
     for (const [net, ps] of Object.entries(sheet.posts)) for (const p of ps) r.post(p, net);
     for (const w of keep) r.commit(w.net, w.pts.slice(1).map((b, j) => [w.pts[j], b]));
-    const wires = [], failed = [];
+    const wires = [], failed = [], seeds = new Map();
+    for (const w of keep) for (let j = 1; j < w.pts.length; j++)
+      for (const p of Router.points(w.pts[j - 1], w.pts[j])) (seeds.get(w.net) || seeds.set(w.net, []).get(w.net)).push(pk(...p));
     for (const net of order) {
-      const pts = sheet.posts[net].map(p => [p[0], p[1]]);
-      const runs = pts.length > 1 ? r.route(net, pts) : [];
+      const pts = sheet.posts[net].map(p => [p[0], p[1]]), seed = seeds.get(net) || [];
+      const runs = pts.length > 1 || seed.length ? r.route(net, pts, seed) : [];
       if (runs === null) failed.push(net);
       else for (const [a, b] of runs) wires.push({ net, pts: [a, b] });
     }

@@ -2,7 +2,7 @@
 // by site/schem.js with its package pins, the rail's controls, the assembler and the waveforms
 // (site/waves.js). Gestures: the wheel or a pinch zooms about the pointer (a trackpad's two-finger scroll
 // pans); dragging pans; + − 0 zoom and fit. Zooming in opens parts; a click on a part's label (site/schem.js)
-// opens or closes it.
+// opens or closes it. The 3D button (or V) shows the die instead (site/die3d.js), on the same engine.
 // The engine runs in each animation frame for at most BUDGET_MS, so zooming and panning stay smooth.
 const BUDGET_MS = 12;
 const MIN_W = 0.05;  // the narrowest view, in chip layout units: a transistor deep in a stage still fills the screen
@@ -31,6 +31,40 @@ const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 world.insertAdjacentHTML('beforeend', `<g id="board">${Board.draw(nl, L)}</g>`);
 const view = new SchemView(svg, world, nl, { x: 0, y: 0, w: L.w });
 world.appendChild(view.root.el);
+
+// ---- the die in 3D (site/die3d.js), shown instead of the schematic; made before the page's key handler
+let die = null, mode3d = false;
+try { die = new DieView($('die'), nl, DIE3D, $('dielabels'), { canvas2d: /[?&]canvas2d\b/.test(location.search) }); } catch (err) { $('view3d').disabled = true; $('view3d').title = `The die in 3D is not available: ${err.message}`; }
+function setMode(on) {
+  if (!die) return;
+  const first = on && !die.shown;
+  mode3d = die.active = on; die.shown ||= on;
+  app.classList.toggle('d3', on); $('view3d').classList.toggle('act', on);
+  $('tip').style.display = 'none';
+  if (first) die.fit(false);
+  history.replaceState(null, '', on ? '#die' : location.pathname + location.search);
+}
+if (die) {
+  die.onHover = (h, ev) => {
+    if (!h) { $('tip').style.display = 'none'; return; }
+    const t = h.layer === 'channel' && nl.transistors[h.shape.k];
+    showTip(ev, t ? `${t.type}MOS ${t.id} ${e.on[h.shape.k] ? 'on' : 'off'} <small>gate ${esc(nl.nets[t.gate].name)}</small>`
+      : h.shape.k >= 0 ? netText(h.shape.k) : h.layer);
+  };
+  die.onClick = h => {
+    const n = !h ? -1 : h.layer === 'channel' ? nl.transistors[h.shape.k].gate : h.shape.k;
+    if (n >= 0) { waves.add(n); app.classList.add('waves'); }
+  };
+  const METAL = { solid: ['clear', 'Metal: clear'], clear: ['off', 'Metal: off'], off: ['solid', 'Metal'] };
+  $('lmetal').onclick = () => {
+    const [m, label] = METAL[die.show.metal];
+    die.show.metal = m; $('lmetal').textContent = label; $('lmetal').classList.toggle('act', m !== 'off');
+  };
+  for (const [id, k] of [['lcontact', 'contact'], ['ldiff', 'diffusion'], ['lchan', 'channel']])
+    $(id).onclick = () => { die.show[k] = !die.show[k]; $(id).classList.toggle('act', die.show[k]); };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => die.colors());
+}
+$('view3d').onclick = () => setMode(!mode3d);
 
 // ---- keyed elements: wires, leads and tags by net; transistor channels
 let byKey = new Map(), trs = [], last = new Map(), hot = null;
@@ -174,6 +208,12 @@ function netText(n) {
   const v = e.value[n], s = e.state?.[n] || 0;
   return `${esc(nl.nets[n].name)} <small>${nl.nets[n].key}</small> = ${v}${s === Engine.CHARGE ? ' <small>charge only</small>' : s === Engine.SHORT ? ' <small>contention</small>' : ''}`;
 }
+function showTip(ev, html) {
+  const r = $('view').getBoundingClientRect();
+  tip.style.display = 'block';
+  tip.style.left = `${ev.clientX - r.left + 14}px`; tip.style.top = `${ev.clientY - r.top + 14}px`;
+  tip.innerHTML = html;
+}
 function hover(ev) {
   const t = ev.target.closest?.('[data-key]'), k = t?.dataset.key || null;
   if (k !== hot) { if (hot) light(hot, false); hot = k; if (k) light(k, true); }
@@ -259,17 +299,19 @@ const waves = new Waves($('waves'), e, n => nl.nets[n].name);
 for (const k of WAVES) waves.add(nl.pins[k]);
 $('wavesbtn').onclick = $('wavetabb').onclick = () => app.classList.toggle('waves');
 $('railt').onclick = () => app.classList.toggle('norail');
-$('zin').onclick = () => { const r = svg.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.6); };
-$('zout').onclick = () => { const r = svg.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.6); };
-$('fit').onclick = () => animate(fit());
+$('zin').onclick = () => { if (mode3d) return die.zoomCentre(1 / 1.6); const r = svg.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.6); };
+$('zout').onclick = () => { if (mode3d) return die.zoomCentre(1.6); const r = svg.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.6); };
+$('fit').onclick = () => (mode3d ? die.fit() : animate(fit()));
 function closeAll() { view.release(); index(); dirty = true; animate(fit()); }
 $('collapse').onclick = closeAll;
 $('theme').onclick = () => {
   const dark = matchMedia('(prefers-color-scheme: dark)').matches, cur = document.documentElement.dataset.theme || (dark ? 'dark' : 'light');
   document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+  die?.colors();
   try { localStorage.setItem('mc14500b.theme', document.documentElement.dataset.theme); } catch { /* storage off */ }
 };
 try { const t = localStorage.getItem('mc14500b.theme'); if (t) document.documentElement.dataset.theme = t; } catch { /* storage off */ }
+die?.colors();
 addEventListener('keydown', ev => {
   if (ev.target.closest('textarea, input, select')) return;
   const r = svg.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -280,7 +322,8 @@ addEventListener('keydown', ev => {
     case '0': animate(fit()); break;
     case 'w': case 'W': app.classList.toggle('waves'); break;
     case '[': app.classList.toggle('norail'); break;
-    case 'c': case 'C': closeAll(); break;
+    case 'c': case 'C': if (!mode3d) closeAll(); break;
+    case 'v': case 'V': setMode(!mode3d); break;
     case 'ArrowLeft': pan(80, 0); break;
     case 'ArrowRight': pan(-80, 0); break;
     case 'ArrowUp': pan(0, 80); break;
@@ -300,8 +343,11 @@ function frame(now) {
     const target = e.t + ips() * dt * period, t0 = performance.now();
     while (e.t < target && performance.now() - t0 < BUDGET_MS) e.run(Math.min(target - e.t, clock.half));
   }
-  if (dirty) { dirty = false; if (view.update()) index(); }
-  refresh();
+  if (mode3d) die.draw(e, now);
+  else {
+    if (dirty) { dirty = false; if (view.update()) index(); }
+    refresh();
+  }
   if (app.classList.contains('waves')) waves.draw();
   if (frames++ % 3 === 0) rail();
   requestAnimationFrame(frame);
@@ -311,4 +357,5 @@ paint();
 card.load(e, prog.rom);
 setVB(fit());
 index();
+if (location.hash === '#die') setMode(true);
 requestAnimationFrame(frame);
