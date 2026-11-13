@@ -10,5 +10,6 @@ A switch-level simulation of the Motorola MC14500B, a 1-bit industrial control u
 - `site/`: the browser simulator, static files: the schematic, or the die in 3D (`site/die3d.js`: WebGL2, or Canvas 2D without it). `site/gen/` is generated and committed, so the site needs no build step.
 - `test/`: node checks of the engine, the card's programs and the layouts.
   - `node test/test.js`, `node test/card_test.js`, `node test/layout_test.js`, `node test/globals_test.js`.
+  - `sh test/all.sh`: every check above, and that `site/gen` matches a rebuild of `die.json`; about 45 s.
 
 To view locally, serve this directory (for example `python3 -m http.server`) and open `/site/`.
