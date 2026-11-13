@@ -1,0 +1,15 @@
+// Written by gen/draft.js.
+(globalThis.LAYOUTS ??= {})["block.OSC"] = {"w":672,"h":576,"k":3,"pins":{"X1":{"at":[0,192],
+"dir":"w","label":"X1"},
+"X2":{"at":[0,384],
+"dir":"w","label":"X2"},
+"OSC.clock_inv.y":{"at":[672,288],
+"dir":"e","label":"clock_inv"},
+"RST.rst_out_nand22.y":{"at":[384,576],
+"dir":"s","label":"rst_out_nand22"}},
+"parts":{"clock_inv":{"sym":"stage.inv","at":[208,272],
+"nets":{"a":"X2","y":"OSC.clock_inv.y"}},
+"clock":{"sym":"cell.or2","at":[400,256],
+"nets":{"in0":"RST.rst_out_nand22.y","in1":"OSC.clock_inv.y","out0":"X1"}}},
+"wires":[{"net":"RST.rst_out_nand22.y","pts":[[384,272],[400,272]]},{"net":"RST.rst_out_nand22.y","pts":[[384,272],[384,576]]},{"net":"X1","pts":[[480,288],[496,288]]},{"net":"X1","pts":[[496,288],[496,192]]},{"net":"X1","pts":[[496,192],[0,192]]},{"net":"X2","pts":[[208,288],[16,288]]},{"net":"X2","pts":[[16,288],[16,384]]},{"net":"X2","pts":[[16,384],[0,384]]},{"net":"OSC.clock_inv.y","pts":[[400,304],[368,304]]},{"net":"OSC.clock_inv.y","pts":[[368,304],[368,336]]},{"net":"OSC.clock_inv.y","pts":[[368,304],[368,288]]},{"net":"OSC.clock_inv.y","pts":[[368,336],[656,336]]},{"net":"OSC.clock_inv.y","pts":[[656,336],[656,288]]},{"net":"OSC.clock_inv.y","pts":[[656,288],[672,288]]},{"net":"OSC.clock_inv.y","pts":[[272,288],[368,288]]}],
+"tags":[]};

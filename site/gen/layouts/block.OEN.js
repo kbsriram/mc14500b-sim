@@ -1,0 +1,15 @@
+// Written by gen/draft.js.
+(globalThis.LAYOUTS ??= {})["block.OEN"] = {"w":672,"h":576,"k":3,"pins":{"IEN.data_in_inv2.y":{"at":[0,288],
+"dir":"w","label":"data_in_inv2"},
+"OEN.q":{"at":[672,288],
+"dir":"e","label":"OEN"},
+"CLK.oen_clk.y":{"at":[192,576],
+"dir":"s","label":"oen_clk"},
+"RST.rst_inv3.y":{"at":[480,576],
+"dir":"s","label":"rst_inv3"}},
+"parts":{"OEN_inv":{"sym":"stage.inv","at":[192,272],
+"nets":{"a":"CLK.oen_clk.y","y":"OEN.OEN_inv.y"}},
+"OEN":{"sym":"cell.dff","at":[384,240],
+"nets":{"in2":"IEN.data_in_inv2.y","in0":"CLK.oen_clk.y","in3":"OEN.OEN_inv.y","out0":"OEN.q","in1":"RST.rst_inv3.y"}}},
+"wires":[{"net":"IEN.data_in_inv2.y","pts":[[384,272],[272,272]]},{"net":"IEN.data_in_inv2.y","pts":[[272,272],[272,256]]},{"net":"IEN.data_in_inv2.y","pts":[[272,256],[16,256]]},{"net":"IEN.data_in_inv2.y","pts":[[16,256],[16,288]]},{"net":"IEN.data_in_inv2.y","pts":[[16,288],[0,288]]},{"net":"OEN.OEN_inv.y","pts":[[384,304],[272,304]]},{"net":"OEN.OEN_inv.y","pts":[[272,304],[272,288]]},{"net":"OEN.OEN_inv.y","pts":[[272,288],[256,288]]},{"net":"OEN.q","pts":[[480,272],[656,272]]},{"net":"OEN.q","pts":[[656,272],[656,288]]},{"net":"OEN.q","pts":[[656,288],[672,288]]},{"net":"RST.rst_inv3.y","pts":[[432,352],[432,560]]},{"net":"RST.rst_inv3.y","pts":[[432,560],[480,560]]},{"net":"RST.rst_inv3.y","pts":[[480,560],[480,576]]},{"net":"CLK.oen_clk.y","pts":[[176,288],[192,288]]},{"net":"CLK.oen_clk.y","pts":[[176,288],[176,320]]},{"net":"CLK.oen_clk.y","pts":[[176,320],[176,560]]},{"net":"CLK.oen_clk.y","pts":[[176,320],[288,320]]},{"net":"CLK.oen_clk.y","pts":[[176,560],[192,560]]},{"net":"CLK.oen_clk.y","pts":[[192,560],[192,576]]},{"net":"CLK.oen_clk.y","pts":[[384,288],[288,288]]},{"net":"CLK.oen_clk.y","pts":[[288,288],[288,320]]}],
+"tags":[]};
