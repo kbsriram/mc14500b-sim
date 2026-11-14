@@ -1,6 +1,8 @@
 # MC14500B
 
-A switch-level simulation of the Motorola MC14500B, a 1-bit industrial control unit, built from polygons traced on a die photo.
+[A switch-level simulation](https://kbsriram.github.io/mc14500b-sim/site/) of the Motorola MC14500B, a 1-bit industrial control unit, built from polygons traced on a die photo.
+
+Demo video (56 s): https://youtu.be/B9euwH1AoN0
 
 - `die.json`: the traced die, and the single source for everything else: polygons by layer, pins, measured or assumed values, cells and blocks.
 - `extract/`: Python (shapely, networkx) that turns `die.json` into the netlist the site runs.
